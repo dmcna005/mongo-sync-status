@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>MongoDB Sync Manager</title>
+    <script>
+      async function startSync(port) {
+        const response = await fetch(`/start_sync/${port}`, { method: "POST" });
+        const result = await response.json();
+        alert(result.message);
+        updateSyncStatus(port);
+      }
+
+      async function stopSync(port) {
+        const response = await fetch(`/stop_sync/${port}`, { method: "POST" });
+        const result = await response.json();
+        alert(result.message);
+      }
+
+      async function reverseSync(port) {
+        const response = await fetch(`/reverse_sync/${port}`, {
+          method: "POST",
+        });
+        const result = await response.json();
+        alert(result.message);
+      }
+
+      async function updateSyncStatus(port) {
+        const response = await fetch(`/sync_status/${port}`);
+        const status = await response.json();
+        document.getElementById(`progress-${port}`).innerText = JSON.stringify(
+          status.progress,
+          null,
+          2
+        );
+        if (status.status === "running") {
+          setTimeout(() => updateSyncStatus(port), 5000);
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1>MongoDB Sync Manager</h1>
+    {% for port in instance_ports %}
+    <div style="margin-bottom: 20px">
+      <h2>Instance on Port {{ port }}</h2>
+      <button onclick="startSync({{ port }})">Start Sync</button>
+      <button onclick="stopSync({{ port }})">Stop Sync</button>
+      <button onclick="reverseSync({{ port }})">Reverse Sync</button>
+      <h3>Progress</h3>
+      <pre id="progress-{{ port }}">Not started</pre>
+    </div>
+    {% endfor %}
+  </body>
+</html>
