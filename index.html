@@ -8,50 +8,68 @@
             const response = await fetch(`/start_sync/${port}`, { method: "POST" });
             const result = await response.json();
             alert(result.message);
+            if (result.port) {
+                autoRefreshProgress(port); // Start auto-refresh when sync is initiated
+            }
         }
 
         async function stopSync(port) {
             const response = await fetch(`/stop_sync/${port}`, { method: "POST" });
             const result = await response.json();
             alert(result.message);
+            if (result.port) {
+                document.getElementById(`status-${port}`).innerText = "stopped"; // Update status
+            }
         }
 
         async function commitSync(port) {
             const response = await fetch(`/commit_sync/${port}`, { method: "POST" });
             const result = await response.json();
             alert(result.message);
+            if (result.port) {
+                document.getElementById(`status-${port}`).innerText = "committed"; // Update status
+            }
         }
 
         async function reverseSync(port) {
             const response = await fetch(`/reverse_sync/${port}`, { method: "POST" });
             const result = await response.json();
             alert(result.message);
+            if (result.port) {
+                document.getElementById(`status-${port}`).innerText = "reversed"; // Update status
+            }
         }
 
         async function checkProgress(port) {
             const response = await fetch(`/sync_status/${port}`);
-            const status = await response.json();
-            document.getElementById(`status-${port}`).innerText = status.status;
-            
-            const progress = status.progress || {};
-            const canCommit = progress.canCommit || false;
-            const lagTimeSeconds = progress.lagTimeSeconds || "N/A";
-            const estimatedTotalBytes = progress.collectionCopy?.estimatedTotalBytes || 0;
-            const estimatedCopiedBytes = progress.collectionCopy?.estimatedCopiedBytes || 0;
-            const progressPercentage = estimatedTotalBytes > 0 ? (estimatedCopiedBytes / estimatedTotalBytes) * 100 : 0;
+            if (response.ok) {
+                const status = await response.json();
+                document.getElementById(`status-${port}`).innerText = status.status;
+                
+                const progress = status.progress || {};
+                const canCommit = progress.canCommit || false;
+                const lagTimeSeconds = progress.lagTimeSeconds || "N/A";
+                const estimatedTotalBytes = progress.collectionCopy?.estimatedTotalBytes || 0;
+                const estimatedCopiedBytes = progress.collectionCopy?.estimatedCopiedBytes || 0;
+                const progressPercentage = estimatedTotalBytes > 0 ? (estimatedCopiedBytes / estimatedTotalBytes) * 100 : 0;
 
-            // Update the progress bar and information
-            document.getElementById(`progress-bar-${port}`).style.width = `${progressPercentage}%`;
-            document.getElementById(`progress-bar-${port}`).innerText = `${progressPercentage.toFixed(2)}%`;
-            document.getElementById(`canCommit-${port}`).innerText = canCommit;
-            document.getElementById(`lagTime-${port}`).innerText = lagTimeSeconds;
-            document.getElementById(`copiedBytes-${port}`).innerText = estimatedCopiedBytes;
-            document.getElementById(`totalBytes-${port}`).innerText = estimatedTotalBytes;
+                // Update the progress bar and information
+                document.getElementById(`progress-bar-${port}`).style.width = `${progressPercentage}%`;
+                document.getElementById(`progress-bar-${port}`).innerText = `${progressPercentage.toFixed(2)}%`;
+                document.getElementById(`canCommit-${port}`).innerText = canCommit;
+                document.getElementById(`lagTime-${port}`).innerText = lagTimeSeconds;
+                document.getElementById(`copiedBytes-${port}`).innerText = estimatedCopiedBytes;
+                document.getElementById(`totalBytes-${port}`).innerText = estimatedTotalBytes;
+            } else {
+                alert("Failed to fetch sync status.");
+            }
         }
 
         // Periodically check and update sync status in UI
         function autoRefreshProgress(port) {
-            setInterval(() => checkProgress(port), 5000);
+            // Clear any existing interval for the port to prevent multiple intervals
+            clearInterval(window[`interval-${port}`]);
+            window[`interval-${port}`] = setInterval(() => checkProgress(port), 5000);
         }
     </script>
     <style>
@@ -96,8 +114,6 @@
             <li>Copied Bytes: <span id="copiedBytes-{{ port }}">0</span></li>
             <li>Total Bytes: <span id="totalBytes-{{ port }}">0</span></li>
         </ul>
-        
-        <script>autoRefreshProgress({{ port }});</script>
     </div>
     {% endfor %}
 </body>
