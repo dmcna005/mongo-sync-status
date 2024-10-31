@@ -9,9 +9,12 @@ app = Flask(__name__)
 
 # Configuration variables
 INSTANCE_PORTS = [27601, 27602]
+SYNC_START_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/start"
 SYNC_PROGRESS_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/progress"
 SYNC_COMMIT_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/commit"
 REVERSE_SYNC_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/reverse"
+SYNC_STOP_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/stop"  # Endpoint to stop sync
+
 CHECK_INTERVAL = 60  # seconds between status checks
 
 # Sync status data to share between threads
@@ -21,9 +24,47 @@ sync_status = {port: {"progress": {}, "status": "idle", "last_update": None} for
 thread_lock = threading.Lock()
 threads = {}
 
-# Configure logging to write to a file
-logging.basicConfig(filename='sync_manager.log', level=logging.DEBUG, 
+# Configure logging to log only debug and warning messages
+logging.basicConfig(filename='sync_manager.log', level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Function to start sync process
+def start_sync(port):
+    payload = {
+        "source": "cluster0",
+        "destination": "cluster1",
+        "reversible": True,
+        "enableUserWriteBlocking": True
+    }
+    start_endpoint = SYNC_START_ENDPOINT_TEMPLATE.format(port)
+    try:
+        response = requests.post(start_endpoint, json=payload)
+        response.raise_for_status()
+        if response.json().get("success", False):
+            with thread_lock:
+                sync_status[port]["status"] = "running"
+            return True
+        else:
+            logging.warning(f"Failed to start sync on port {port}. Response: {response.json()}")
+            return False
+    except Exception as e:
+        logging.warning(f"Error starting sync for port {port}: {e}")
+        return False
+
+# Function to stop sync process
+def stop_sync(port):
+    stop_endpoint = SYNC_STOP_ENDPOINT_TEMPLATE.format(port)
+    try:
+        response = requests.post(stop_endpoint, json={})
+        response.raise_for_status()
+        if response.json().get("success", False):
+            with thread_lock:
+                sync_status[port]["status"] = "stopped"
+            return True
+        return False
+    except Exception as e:
+        logging.warning(f"Error stopping sync for port {port}: {e}")
+        return False
 
 # Function to check sync progress
 def check_sync_status(port):
@@ -32,10 +73,10 @@ def check_sync_status(port):
         response = requests.get(progress_endpoint)
         response.raise_for_status()
         status_data = response.json()
-        logging.info(f"Sync status for port {port}: {status_data}")  # Log response data
+        logging.debug(f"Sync status for port {port}: {status_data}")
         return status_data.get("progress", {})
     except Exception as e:
-        logging.error(f"Error checking sync status for port {port}: {e}")  # Log error
+        logging.warning(f"Error checking sync status for port {port}: {e}")
         return None
 
 # Function to commit sync
@@ -48,7 +89,7 @@ def commit_sync(port):
             return True
         return False
     except Exception as e:
-        logging.error(f"Error committing sync for port {port}: {e}")
+        logging.warning(f"Error committing sync for port {port}: {e}")
         return False
 
 # Function to reverse sync
@@ -61,10 +102,10 @@ def reverse_sync(port):
             return True
         return False
     except Exception as e:
-        logging.error(f"Error starting reverse sync for port {port}: {e}")
+        logging.warning(f"Error starting reverse sync for port {port}: {e}")
         return False
 
-# Background thread to monitor existing or started syncs
+# Background thread to monitor sync
 def monitor_sync(port):
     while True:
         with thread_lock:
@@ -85,32 +126,27 @@ def monitor_sync(port):
 
         time.sleep(CHECK_INTERVAL)
 
-# Function to initialize monitoring for already running processes
-def initialize_monitoring():
-    for port in INSTANCE_PORTS:
-        progress = check_sync_status(port)
-        if progress and progress.get("state") == "RUNNING":
-            with thread_lock:
-                sync_status[port]["status"] = "running"
-                sync_status[port]["progress"] = progress
-            thread = threading.Thread(target=monitor_sync, args=(port,))
-            thread.start()
-            threads[port] = thread
-
 # Routes
 @app.route("/")
 def index():
     return render_template("index.html", instance_ports=INSTANCE_PORTS)
 
-@app.route("/check_sync/<int:port>")
-def check_sync_endpoint(port):
-    # Fetch and return current sync status without starting a new sync
-    progress = check_sync_status(port)
-    if progress:
+@app.route("/start_sync/<int:port>", methods=["POST"])
+def start_sync_endpoint(port):
+    if start_sync(port):
+        thread = threading.Thread(target=monitor_sync, args=(port,))
+        thread.start()
+        threads[port] = thread
+        return jsonify({"message": f"Sync started on port {port}", "port": port})
+    return jsonify({"message": f"Failed to start sync on port {port}", "port": port}), 500
+
+@app.route("/stop_sync/<int:port>", methods=["POST"])
+def stop_sync_endpoint(port):
+    if stop_sync(port):
         with thread_lock:
-            sync_status[port]["progress"] = progress
-            sync_status[port]["status"] = "running" if progress.get("state") == "RUNNING" else "idle"
-    return jsonify(sync_status.get(port, {}))
+            sync_status[port]["status"] = "stopped"
+        return jsonify({"message": f"Sync stopped on port {port}", "port": port})
+    return jsonify({"message": f"Failed to stop sync on port {port}", "port": port}), 500
 
 @app.route("/commit_sync/<int:port>", methods=["POST"])
 def commit_sync_endpoint(port):
@@ -135,6 +171,17 @@ def sync_status_endpoint(port):
     return jsonify(status)
 
 # Initialize monitoring for any running sync processes
+def initialize_monitoring():
+    for port in INSTANCE_PORTS:
+        progress = check_sync_status(port)
+        if progress and progress.get("state") == "RUNNING":
+            with thread_lock:
+                sync_status[port]["status"] = "running"
+                sync_status[port]["progress"] = progress
+            thread = threading.Thread(target=monitor_sync, args=(port,))
+            thread.start()
+            threads[port] = thread
+
 initialize_monitoring()
 
 if __name__ == "__main__":
