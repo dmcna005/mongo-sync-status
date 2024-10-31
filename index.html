@@ -16,17 +16,61 @@
             alert(result.message);
         }
 
+        async function commitSync(port) {
+            const response = await fetch(`/commit_sync/${port}`, { method: "POST" });
+            const result = await response.json();
+            alert(result.message);
+        }
+
+        async function reverseSync(port) {
+            const response = await fetch(`/reverse_sync/${port}`, { method: "POST" });
+            const result = await response.json();
+            alert(result.message);
+        }
+
         async function checkProgress(port) {
             const response = await fetch(`/sync_status/${port}`);
             const status = await response.json();
-            document.getElementById(`progress-${port}`).innerText = JSON.stringify(status.progress, null, 2);
             document.getElementById(`status-${port}`).innerText = status.status;
+            
+            const progress = status.progress || {};
+            const canCommit = progress.canCommit || false;
+            const lagTimeSeconds = progress.lagTimeSeconds || "N/A";
+            const estimatedTotalBytes = progress.collectionCopy?.estimatedTotalBytes || 0;
+            const estimatedCopiedBytes = progress.collectionCopy?.estimatedCopiedBytes || 0;
+            const progressPercentage = estimatedTotalBytes > 0 ? (estimatedCopiedBytes / estimatedTotalBytes) * 100 : 0;
+
+            // Update the progress bar and information
+            document.getElementById(`progress-bar-${port}`).style.width = `${progressPercentage}%`;
+            document.getElementById(`progress-bar-${port}`).innerText = `${progressPercentage.toFixed(2)}%`;
+            document.getElementById(`canCommit-${port}`).innerText = canCommit;
+            document.getElementById(`lagTime-${port}`).innerText = lagTimeSeconds;
+            document.getElementById(`copiedBytes-${port}`).innerText = estimatedCopiedBytes;
+            document.getElementById(`totalBytes-${port}`).innerText = estimatedTotalBytes;
         }
 
+        // Periodically check and update sync status in UI
         function autoRefreshProgress(port) {
             setInterval(() => checkProgress(port), 5000);
         }
     </script>
+    <style>
+        .progress-container {
+            width: 100%;
+            background-color: #ddd;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+
+        .progress-bar {
+            height: 25px;
+            width: 0%;
+            background-color: #4caf50;
+            text-align: center;
+            color: white;
+            border-radius: 5px;
+        }
+    </style>
 </head>
 <body>
     <h1>MongoDB Sync Manager</h1>
@@ -35,10 +79,24 @@
         <h2>Instance on Port {{ port }}</h2>
         <button onclick="startSync({{ port }})">Start Sync</button>
         <button onclick="stopSync({{ port }})">Stop Sync</button>
+        <button onclick="commitSync({{ port }})">Commit Sync</button>
+        <button onclick="reverseSync({{ port }})">Reverse Sync</button>
         <button onclick="checkProgress({{ port }})">Refresh Progress</button>
         <p>Status: <span id="status-{{ port }}">idle</span></p>
+
         <h3>Progress</h3>
-        <pre id="progress-{{ port }}">No status available</pre>
+        <div class="progress-container">
+            <div id="progress-bar-{{ port }}" class="progress-bar">0%</div>
+        </div>
+        
+        <p><strong>Details:</strong></p>
+        <ul>
+            <li>Can Commit: <span id="canCommit-{{ port }}">false</span></li>
+            <li>Lag Time (seconds): <span id="lagTime-{{ port }}">N/A</span></li>
+            <li>Copied Bytes: <span id="copiedBytes-{{ port }}">0</span></li>
+            <li>Total Bytes: <span id="totalBytes-{{ port }}">0</span></li>
+        </ul>
+        
         <script>autoRefreshProgress({{ port }});</script>
     </div>
     {% endfor %}
