@@ -7,7 +7,7 @@ import logging
 
 app = Flask(__name__)
 
-INSTANCE_PORTS = [27601, 27602]
+INSTANCE_PORTS = [27601, 27602, 27603]
 SYNC_START_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/start"
 SYNC_PROGRESS_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/progress"
 SYNC_COMMIT_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/commit"
