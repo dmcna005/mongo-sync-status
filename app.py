@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify
 import requests
 import threading
 import time
@@ -14,14 +14,13 @@ SYNC_COMMIT_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/commit"
 REVERSE_SYNC_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/reverse"
 SYNC_STOP_ENDPOINT_TEMPLATE = "http://localhost:{}/api/v1/stop"
 
-CHECK_INTERVAL = 60  # seconds between status checks
+CHECK_INTERVAL = 5  # seconds between status checks
 
 # Shared sync status data
-sync_status = {port: {"progress": {}, "status": "idle", "last_update": None} for port in INSTANCE_PORTS}
+sync_status = {port: {"progress": {}, "status": "idle", "last_update": None, "monitor_thread": None} for port in INSTANCE_PORTS}
 
 # Lock for thread-safe updates
 thread_lock = threading.Lock()
-threads = {}
 
 logging.basicConfig(filename='sync_manager.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -98,8 +97,8 @@ def reverse_sync(port):
 def monitor_sync(port):
     while True:
         with thread_lock:
-            if sync_status[port]["status"] not in ["running", "idle"]:
-                break
+            if sync_status[port]["status"] not in ["running"]:
+                break  # Exit the loop if the status is not "running"
 
         progress = check_sync_status(port)
         if progress:
@@ -107,11 +106,13 @@ def monitor_sync(port):
                 sync_status[port]["progress"] = progress
                 sync_status[port]["last_update"] = datetime.now()
 
-            if progress.get("lagTimeSeconds") <= 5 and progress.get("canCommit", False):
+            # Check if we can commit
+            if progress.get("lagTimeSeconds", 0) <= 5 and progress.get("canCommit", False):
                 if commit_sync(port):
                     with thread_lock:
                         sync_status[port]["status"] = "committed"
-                break
+                break  # Exit the loop after committing
+
         time.sleep(CHECK_INTERVAL)
 
 @app.route("/")
@@ -120,18 +121,23 @@ def index():
 
 @app.route("/start_sync/<int:port>", methods=["POST"])
 def start_sync_endpoint(port):
-    if start_sync(port):
-        thread = threading.Thread(target=monitor_sync, args=(port,))
-        thread.start()
-        threads[port] = thread
-        return jsonify({"message": f"Sync started on port {port}", "port": port})
-    return jsonify({"message": f"Failed to start sync on port {port}", "port": port}), 500
+    if port in sync_status and sync_status[port]["status"] == "idle":
+        if start_sync(port):
+            thread = threading.Thread(target=monitor_sync, args=(port,))
+            thread.start()
+            with thread_lock:
+                sync_status[port]["monitor_thread"] = thread
+            return jsonify({"message": f"Sync started on port {port}", "port": port})
+    return jsonify({"message": f"Failed to start sync on port {port} or already running", "port": port}), 500
 
 @app.route("/stop_sync/<int:port>", methods=["POST"])
 def stop_sync_endpoint(port):
     if stop_sync(port):
         with thread_lock:
             sync_status[port]["status"] = "stopped"
+            if sync_status[port]["monitor_thread"] is not None:
+                # Optionally, you could join the thread if you want to wait for it to finish
+                sync_status[port]["monitor_thread"] = None
         return jsonify({"message": f"Sync stopped on port {port}", "port": port})
     return jsonify({"message": f"Failed to stop sync on port {port}", "port": port}), 500
 
@@ -149,32 +155,11 @@ def reverse_sync_endpoint(port):
 
 @app.route("/sync_status/<int:port>")
 def sync_status_route(port):
-    progress_endpoint = f"http://localhost:{port}/api/v1/progress"
-    try:
-        response = requests.get(progress_endpoint, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        progress_data = response.json()
-
-        # Extract and return the sync state
-        state = progress_data.get("progress", {}).get("state", "IDLE")
-        can_commit = progress_data.get("progress", {}).get("canCommit", False)
-        lag_time_seconds = progress_data.get("progress", {}).get("lagTimeSeconds", "N/A")
-        estimated_total_bytes = progress_data.get("progress", {}).get("collectionCopy", {}).get("estimatedTotalBytes", 0)
-        estimated_copied_bytes = progress_data.get("progress", {}).get("collectionCopy", {}).get("estimatedCopiedBytes", 0)
-
-        return jsonify({
-            "status": state,
-            "progress": {
-                "canCommit": can_commit,
-                "lagTimeSeconds": lag_time_seconds,
-                "estimatedTotalBytes": estimated_total_bytes,
-                "estimatedCopiedBytes": estimated_copied_bytes,
-            }
-        })
-    except requests.exceptions.RequestException as e:
-        logging.warning(f"Failed to connect to MongoSync on port {port}: {e}")
-        return jsonify({"error": f"Could not reach MongoSync on port {port}"}), 503
-
+    with thread_lock:
+        status = sync_status.get(port)
+        if status is None:
+            return jsonify({"error": "Invalid port"}), 404
+        return jsonify(status)
 
 if __name__ == "__main__":
     app.run(debug=True)
