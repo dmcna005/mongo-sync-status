@@ -148,10 +148,33 @@ def reverse_sync_endpoint(port):
     return jsonify({"message": f"Failed to reverse sync on port {port}", "port": port}), 500
 
 @app.route("/sync_status/<int:port>")
-def sync_status_endpoint(port):
-    with thread_lock:
-        status = sync_status.get(port, {})
-    return jsonify(status)
+def sync_status_route(port):
+    progress_endpoint = f"http://localhost:{port}/api/v1/progress"
+    try:
+        response = requests.get(progress_endpoint, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        progress_data = response.json()
+
+        # Extract and return the sync state
+        state = progress_data.get("progress", {}).get("state", "IDLE")
+        can_commit = progress_data.get("progress", {}).get("canCommit", False)
+        lag_time_seconds = progress_data.get("progress", {}).get("lagTimeSeconds", "N/A")
+        estimated_total_bytes = progress_data.get("progress", {}).get("collectionCopy", {}).get("estimatedTotalBytes", 0)
+        estimated_copied_bytes = progress_data.get("progress", {}).get("collectionCopy", {}).get("estimatedCopiedBytes", 0)
+
+        return jsonify({
+            "status": state,
+            "progress": {
+                "canCommit": can_commit,
+                "lagTimeSeconds": lag_time_seconds,
+                "estimatedTotalBytes": estimated_total_bytes,
+                "estimatedCopiedBytes": estimated_copied_bytes,
+            }
+        })
+    except requests.exceptions.RequestException as e:
+        logging.warning(f"Failed to connect to MongoSync on port {port}: {e}")
+        return jsonify({"error": f"Could not reach MongoSync on port {port}"}), 503
+
 
 if __name__ == "__main__":
     app.run(debug=True)
