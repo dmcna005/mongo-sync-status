@@ -154,12 +154,28 @@ def reverse_sync_endpoint(port):
     return jsonify({"message": f"Failed to reverse sync on port {port}", "port": port}), 500
 
 @app.route("/sync_status/<int:port>")
+@app.route("/sync_status/<int:port>")
 def sync_status_route(port):
-    with thread_lock:
-        status = sync_status.get(port)
-        if status is None:
-            return jsonify({"error": "Invalid port"}), 404
-        return jsonify(status)
+    try:
+        progress = sync_status[port].get("progress", {})
+        status = sync_status[port].get("status", "idle")
+        can_commit = progress.get("canCommit", False)
+        lag_time_seconds = progress.get("lagTimeSeconds", "N/A")
+        estimated_total_bytes = progress.get("collectionCopy", {}).get("estimatedTotalBytes", 0)
+        estimated_copied_bytes = progress.get("collectionCopy", {}).get("estimatedCopiedBytes", 0)
+
+        return jsonify({
+            "status": status,
+            "progress": {
+                "canCommit": can_commit,
+                "lagTimeSeconds": lag_time_seconds,
+                "estimatedTotalBytes": estimated_total_bytes,
+                "estimatedCopiedBytes": estimated_copied_bytes,
+            }
+        })
+    except Exception as e:
+        logging.warning(f"Error fetching sync status for port {port}: {e}")
+        return jsonify({"error": f"Could not retrieve status for port {port}"}), 503
 
 if __name__ == "__main__":
     app.run(debug=True)
