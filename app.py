@@ -107,7 +107,7 @@ def monitor_sync(port):
                 sync_status[port]["progress"] = progress
                 sync_status[port]["last_update"] = datetime.now()
 
-            if progress.get("lagTimeSeconds") == 0 and progress.get("canCommit", False):
+            if progress.get("lagTimeSeconds") <= 5 and progress.get("canCommit", False):
                 if commit_sync(port):
                     with thread_lock:
                         sync_status[port]["status"] = "committed"
