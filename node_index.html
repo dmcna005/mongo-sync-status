@@ -3,67 +3,112 @@
 <head>
     <meta charset="UTF-8">
     <title>MongoDB Sync Manager</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="/socket.io/socket.io.js"></script>
     <style>
-        .progress-bar {
-            transition: width 0.4s ease;
-        }
+        .progress-container { width: 100%; background-color: #ddd; border-radius: 5px; margin-top: 10px; }
+        .progress-bar { height: 25px; width: 0%; background-color: #4caf50; text-align: center; color: white; border-radius: 5px; }
     </style>
+</head>
+<body>
+    <h1>MongoDB Sync Manager</h1>
+    <div id="instances"></div>
+
     <script>
-        async function sendRequest(endpoint, port) {
-            const response = await fetch(`/${endpoint}/${port}`, { method: "POST" });
-            const result = await response.json();
-            alert(result.message);
-            if (endpoint === "start_sync") autoRefreshProgress(port);
+        const instancePorts = [27601, 27602, 27603];
+        const socket = io();
+
+        function createInstanceUI(port) {
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <h2>Instance on Port ${port}</h2>
+                <button onclick="startSync(${port})">Start Sync</button>
+                <button onclick="stopSync(${port})">Stop Sync</button>
+                <button onclick="commitSync(${port})">Commit Sync</button>
+                <button onclick="reverseSync(${port})">Reverse Sync</button>
+                <p>Status: <span id="status-${port}">idle</span></p>
+                <div class="progress-container">
+                    <div id="progress-bar-${port}" class="progress-bar">0%</div>
+                </div>
+                <ul>
+                    <li>Can Commit: <span id="canCommit-${port}">false</span></li>
+                    <li>Lag Time (seconds): <span id="lagTime-${port}">N/A</span></li>
+                    <li>Copied Bytes: <span id="copiedBytes-${port}">0</span></li>
+                    <li>Total Bytes: <span id="totalBytes-${port}">0</span></li>
+                </ul>
+            `;
+            document.getElementById('instances').appendChild(container);
+            checkProgress(port); // Initial check for existing sync progress
         }
 
-        async function checkProgress(port) {
-            const response = await fetch(`/sync_status/${port}`);
-            if (response.ok) {
-                const status = await response.json();
-                document.getElementById(`status-${port}`).innerText = status.status;
-                const progress = status.progress || {};
-                const totalBytes = progress.estimatedTotalBytes || 0;
-                const copiedBytes = progress.estimatedCopiedBytes || 0;
-                const progressPercentage = totalBytes ? (copiedBytes / totalBytes) * 100 : 0;
-
-                document.getElementById(`progress-bar-${port}`).style.width = `${progressPercentage}%`;
-                document.getElementById(`progress-bar-${port}`).innerText = `${progressPercentage.toFixed(2)}%`;
-                document.getElementById(`canCommit-${port}`).innerText = progress.canCommit;
-                document.getElementById(`lagTime-${port}`).innerText = progress.lagTimeSeconds || "N/A";
-            }
+        function startSync(port) {
+            fetch(`/start_sync/${port}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(result => alert(result.message))
+                .catch(err => alert(`Error: ${err}`));
         }
 
+        function stopSync(port) {
+            fetch(`/stop_sync/${port}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(result => alert(result.message))
+                .catch(err => alert(`Error: ${err}`));
+        }
+
+        function commitSync(port) {
+            fetch(`/commit_sync/${port}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(result => alert(result.message))
+                .catch(err => alert(`Error: ${err}`));
+        }
+
+        function reverseSync(port) {
+            fetch(`/reverse_sync/${port}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(result => alert(result.message))
+                .catch(err => alert(`Error: ${err}`));
+        }
+
+        function checkProgress(port) {
+            fetch(`/sync_status/${port}`)
+                .then(response => response.json())
+                .then(data => updateProgressUI(port, data.progress || {}))
+                .catch(err => console.error(`Error fetching progress for port ${port}: ${err}`));
+        }
+
+        function updateProgressUI(port, progress) {
+            const status = progress.status || 'idle';
+            document.getElementById(`status-${port}`).innerText = status;
+
+            const canCommit = progress.canCommit || false;
+            const lagTimeSeconds = progress.lagTimeSeconds || "N/A";
+            const estimatedTotalBytes = progress.collectionCopy?.estimatedTotalBytes || 0;
+            const estimatedCopiedBytes = progress.collectionCopy?.estimatedCopiedBytes || 0;
+            const progressPercentage = estimatedTotalBytes > 0 ? (estimatedCopiedBytes / estimatedTotalBytes) * 100 : 0;
+
+            document.getElementById(`progress-bar-${port}`).style.width = `${progressPercentage}%`;
+            document.getElementById(`progress-bar-${port}`).innerText = `${progressPercentage.toFixed(2)}%`;
+            document.getElementById(`canCommit-${port}`).innerText = canCommit;
+            document.getElementById(`lagTime-${port}`).innerText = lagTimeSeconds;
+            document.getElementById(`copiedBytes-${port}`).innerText = estimatedCopiedBytes;
+            document.getElementById(`totalBytes-${port}`).innerText = estimatedTotalBytes;
+        }
+
+        // Periodically check and update sync status in UI
         function autoRefreshProgress(port) {
             setInterval(() => checkProgress(port), 5000);
         }
+
+        // Initialize UI for each instance and set periodic checks
+        instancePorts.forEach(port => {
+            createInstanceUI(port);
+            autoRefreshProgress(port);
+        });
+
+        // Listen for updates from the server via socket
+        socket.on('syncStatusUpdate', data => {
+            const { port, status, progress } = data;
+            updateProgressUI(port, progress || {});
+        });
     </script>
-</head>
-<body class="bg-light">
-    <div class="container my-5">
-        <h1 class="mb-4">MongoDB Sync Manager</h1>
-        {% for port in instance_ports %}
-        <div class="card mb-4">
-            <div class="card-header">Instance on Port {{ port }}</div>
-            <div class="card-body">
-                <p>Status: <span id="status-{{ port }}">idle</span></p>
-                <div class="mb-3">
-                    <button onclick="sendRequest('start_sync', {{ port }})" class="btn btn-primary">Start Sync</button>
-                    <button onclick="sendRequest('stop_sync', {{ port }})" class="btn btn-danger">Stop Sync</button>
-                    <button onclick="sendRequest('commit_sync', {{ port }})" class="btn btn-success">Commit Sync</button>
-                    <button onclick="sendRequest('reverse_sync', {{ port }})" class="btn btn-warning">Reverse Sync</button>
-                </div>
-                <div class="progress mb-3" style="height: 25px;">
-                    <div id="progress-bar-{{ port }}" class="progress-bar" role="progressbar" style="width: 0%;">0%</div>
-                </div>
-                <ul>
-                    <li>Can Commit: <span id="canCommit-{{ port }}">false</span></li>
-                    <li>Lag Time (seconds): <span id="lagTime-{{ port }}">N/A</span></li>
-                </ul>
-                <script>autoRefreshProgress({{ port }});</script>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
 </body>
 </html>
