@@ -1,4 +1,6 @@
-const { MongoClient } = require('mongodb');
+// compareMongoDocumentCounts.js
+
+import { MongoClient } from 'mongodb';
 
 const selfHostedUri = 'mongodb://localhost:27017'; // replace with your self-hosted MongoDB URI
 const atlasUri = 'mongodb+srv://<username>:<password>@cluster0.mongodb.net'; // replace with your MongoDB Atlas URI
@@ -11,6 +13,11 @@ async function getNamespaceCounts(client) {
   const dbList = await client.db().admin().listDatabases();
 
   for (const { name: dbName } of dbList.databases) {
+    // Ignore system databases
+    if (dbName.startsWith('system') || ['admin', 'local', 'config'].includes(dbName)) {
+      continue;
+    }
+
     const db = client.db(dbName);
     const collections = await db.listCollections().toArray();
 
