@@ -22,8 +22,12 @@ async function getNamespaceCounts(client) {
     const collections = await db.listCollections().toArray();
 
     for (const { name: collName } of collections) {
-      const count = await db.collection(collName).countDocuments();
-      namespaceCounts[`${dbName}.${collName}`] = count;
+      try {
+        const count = await db.collection(collName).countDocuments();
+        namespaceCounts[`${dbName}.${collName}`] = count;
+      } catch (error) {
+        console.error(`Error counting documents in ${dbName}.${collName}:`, error.message);
+      }
     }
   }
 
